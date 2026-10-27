@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101827">
+  <title>NetAlert — Supervision</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #101827;
+      color: #e8eef8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 32px 18px;
+    }
+
+    main {
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    h1 { margin: 0; font-size: 2rem; }
+    .subtitle, .muted { color: #a8b5c9; }
+
+    button {
+      border: 0;
+      border-radius: 9px;
+      padding: 11px 16px;
+      background: #4f8cff;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .6; cursor: wait; }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    .card, .panel {
+      background: #1a2638;
+      border: 1px solid #2b3a50;
+      border-radius: 14px;
+      padding: 20px;
+    }
+
+    .metric { font-size: 2rem; font-weight: 800; margin-top: 8px; }
+
+    .panel h2 { margin-top: 0; }
+
+    .service {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+      border-top: 1px solid #2b3a50;
+    }
+
+    .service:first-of-type { border-top: 0; }
+    .service-name { font-weight: 700; }
+    .service-url { color: #a8b5c9; font-size: .9rem; overflow-wrap: anywhere; }
+
+    .status {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: .8rem;
+      font-weight: 800;
+    }
+
+    .up { background: #123d31; color: #70e0b5; }
+    .down { background: #4b2028; color: #ff9da8; }
+    .error { color: #ffb4a2; }
+    footer { margin-top: 22px; color: #a8b5c9; font-size: .9rem; }
+
+    @media (max-width: 520px) {
+      body { padding: 22px 12px; }
+      h1 { font-size: 1.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>NetAlert</h1>
+        <p class="subtitle">Tableau de bord de supervision des services</p>
+      </div>
+      <button id="refresh" type="button">Actualiser</button>
+    </header>
+
+    <section class="summary" aria-label="Résumé de supervision">
+      <article class="card">
+        <div class="muted">Services surveillés</div>
+        <div class="metric" id="total">—</div>
+      </article>
+      <article class="card">
+        <div class="muted">Disponibles</div>
+        <div class="metric" id="up">—</div>
+      </article>
+      <article class="card">
+        <div class="muted">Indisponibles</div>
+        <div class="metric" id="down">—</div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>État des services</h2>
+      <p id="message" class="muted" role="status">Chargement des données...</p>
+      <div id="services"></div>
+    </section>
+
+    <footer>
+      Dernière vérification : <span id="checkedAt">jamais</span>
+      <span aria-hidden="true"> · </span>
+      Actualisation automatique toutes les 15 secondes.
+    </footer>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function makeText(tag, className, value) {
+      const element = document.createElement(tag);
+      element.className = className;
+      element.textContent = value;
+      return element;
+    }
+
+    async function refreshStatus() {
+      const button = $("refresh");
+      const message = $("message");
+      button.disabled = true;
+      message.textContent = "Vérification des services...";
+
+      try {
+        const response = await fetch("/api/status", { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+
+        const data = await response.json();
+        $("total").textContent = data.summary.total;
+        $("up").textContent = data.summary.up;
+        $("down").textContent = data.summary.down;
+        $("checkedAt").textContent = new Date(data.checkedAt).toLocaleString();
+
+        const container = $("services");
+        container.replaceChildren();
+
+        for (const service of data.services) {
+          const row = document.createElement("article");
+          row.className = "service";
+
+          const details = document.createElement("div");
+          details.append(
+            makeText("div", "service-name", service.name),
+            makeText("div", "service-url", service.url),
+            makeText(
+              "div",
+              "muted",
+              service.error
+                ? service.error + " · " + service.latencyMs + " ms"
+                : "HTTP " + service.statusCode + " · " + service.latencyMs + " ms"
+            )
+          );
+
+          const badge = makeText(
+            "span",
+            "status " + (service.status === "UP" ? "up" : "down"),
+            service.status
+          );
+
+          row.append(details, badge);
+          container.append(row);
+        }
+
+        message.textContent = data.summary.down === 0
+          ? "Tous les services répondent."
+          : "Vérification terminée : certains services sont indisponibles.";
+        message.className = data.summary.down === 0 ? "muted" : "error";
+      } catch (error) {
+        message.textContent = "Impossible de récupérer l'état des services. Vérifie que le serveur fonctionne.";
+        message.className = "error";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    $("refresh").addEventListener("click", refreshStatus);
+    refreshStatus();
+    setInterval(refreshStatus, 15000);
+  </script>
+</body>
+</html>
